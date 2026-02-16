@@ -4,18 +4,18 @@ Contract Q&A application with Retrieval-Augmented Generation (RAG):
 - Upload PDF/DOCX contracts
 - Index contract text into Chroma
 - Chat with grounded answers and chunk citations
+- Run E2E RAG evaluation (G-Eval) for the selected document
 - Manage stored documents from the web UI
 
-## What Was Removed
-This project no longer includes summary/evaluation features or files:
-- Removed summary/evaluation API endpoints
-- Removed summary/evaluation schemas and evaluator module
-- Removed local `docs/` folder
+## Current Scope
+- Included: chat, upload/index, document management, E2E GEval
+- Removed: summary endpoint/UI
+- Removed: local `docs/` folder
 
 ## Tech Stack
 - Backend: FastAPI
-- Frontend: FastAPI-served HTML/CSS/JS (Bootstrap)
-- Vector store: ChromaDB
+- Frontend: FastAPI-served HTML/CSS/JavaScript (Bootstrap)
+- Vector DB: ChromaDB
 - LLM provider: OpenAI API
   - Chat model: `OPENAI_CHAT_MODEL`
   - Embedding model: `OPENAI_EMBEDDING_MODEL`
@@ -48,7 +48,7 @@ requirements.txt
 ```
 
 ## Setup
-1. Create and activate venv:
+1. Create and activate virtual env:
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
@@ -59,59 +59,61 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-3. Configure env:
+3. Configure environment:
 ```bash
 copy .env.example .env
 ```
 Set `OPENAI_API_KEY` in `.env`.
 
-4. Run:
+4. Run API + web UI:
 ```bash
 python run_api.py
 ```
 
-5. Open UI:
+5. Open browser:
 - `http://127.0.0.1:8000/`
 
-## How This Project Works
+## How It Works
 1. Document upload
 - UI sends file to `POST /api/documents/upload`.
-- Backend validates extension (`.pdf`, `.docx`), reads bytes, computes stable `doc_id`.
+- Backend validates file type and reads bytes.
+- A stable `doc_id` is generated from filename + content hash.
 
 2. Parsing and chunking
-- `document_parser.py` extracts section text.
-- `chunking.py` splits into chunks:
-  - standard chunking for normal sections
-  - line-based chunking for list/appendix-like content
+- `document_parser.py` extracts contract text sections.
+- `chunking.py` creates chunks:
+  - normal sections: character chunking
+  - list-like sections: line-based chunking
 
 3. Embedding and indexing
-- `openai_client.py` creates embeddings.
-- `vector_store.py` writes vectors/chunks to Chroma.
-- Document metadata is saved (`filename`, `pages_or_sections`, `chunks_indexed`, `indexed_at`).
+- `openai_client.py` builds embeddings.
+- `vector_store.py` stores vectors and metadata in Chroma.
 
-4. Chat retrieval pipeline
+4. Chat pipeline
 - UI sends question to `POST /api/chat/{session_id}/{doc_id}`.
-- Pipeline in `rag_pipeline.py`:
-  - detects list-intent questions
-  - retrieves candidates via vector search + keyword BM25 search
-  - merges/de-duplicates by `chunk_id`
-  - reranks candidates
-  - builds grounded context prompt
+- `rag_pipeline.py` does:
+  - list-intent detection
+  - hybrid retrieval (vector + keyword BM25)
+  - merge + dedupe by `chunk_id`
+  - rerank
+  - grounded answer generation with citations
 
-5. Answer generation + guardrails
-- Chat model answers using retrieved context only.
-- Response includes citations, confidence, latency, retrieved chunk count.
-- Low-confidence responses are labeled accordingly.
+5. Guardrails
+- Response includes confidence and grounded status.
+- Low-confidence answers are flagged in output.
 
-6. Session memory and cleanup
-- Per-session chat memory is stored in `chat_memory.py`.
-- Session cleanup endpoint clears memory and optionally session-linked docs.
+6. E2E GEval pipeline
+- UI button calls `POST /api/evaluate/{doc_id}`.
+- Backend runs a fixed prompt set through full RAG (`ask(...)`).
+- LLM-as-judge scores each answer on:
+  - groundedness
+  - answer relevance
+  - citation faithfulness
+- Returns aggregate metrics + per-example records.
 
 ## Full API Schema
 
-### Core Models
-
-#### `AskRequest`
+### `AskRequest`
 ```json
 {
   "question": "string (min length: 3)",
@@ -119,7 +121,7 @@ python run_api.py
 }
 ```
 
-#### `Citation`
+### `Citation`
 ```json
 {
   "doc_id": "string",
@@ -130,7 +132,7 @@ python run_api.py
 }
 ```
 
-#### `GuardrailStatus`
+### `GuardrailStatus`
 ```json
 {
   "grounded": true,
@@ -138,7 +140,7 @@ python run_api.py
 }
 ```
 
-#### `AskResponse`
+### `AskResponse`
 ```json
 {
   "answer": "string",
@@ -161,7 +163,7 @@ python run_api.py
 }
 ```
 
-#### `UploadResponse`
+### `UploadResponse`
 ```json
 {
   "doc_id": "string",
@@ -171,7 +173,7 @@ python run_api.py
 }
 ```
 
-#### `DocumentStatus`
+### `DocumentStatus`
 ```json
 {
   "doc_id": "string",
@@ -182,58 +184,69 @@ python run_api.py
 }
 ```
 
-### Endpoints
-
-#### `GET /api/health`
-Response:
+### `EvalMetric`
 ```json
 {
-  "status": "ok",
-  "chat_model": "gpt-4o-mini",
-  "embedding_model": "text-embedding-3-large",
-  "rerank_model": "gpt-4o-mini"
+  "name": "geval_overall",
+  "value": 0.81,
+  "note": "optional string"
 }
 ```
 
-#### `POST /api/documents/upload`
-- Query params:
-  - `session_id` (optional)
-- Multipart body:
-  - `file`: `.pdf` or `.docx`
-- Response: `UploadResponse`
-
-#### `GET /api/documents/{doc_id}`
-- Response: `DocumentStatus`
-
-#### `GET /api/documents`
-- Response: `DocumentStatus[]`
-
-#### `POST /api/documents/clear`
-Response:
+### `EvaluationExample`
 ```json
 {
-  "deleted_docs": 0,
-  "deleted_upload_files": 0
+  "question": "string",
+  "confidence": 0.72,
+  "grounded": true,
+  "citations": 4,
+  "latency_ms": 1100,
+  "geval_groundedness": 0.8,
+  "geval_answer_relevance": 0.8,
+  "geval_citation_faithfulness": 1.0,
+  "geval_overall": 0.866,
+  "answer_preview": "string"
 }
 ```
 
-#### `POST /api/chat/{session_id}/{doc_id}`
-Request body: `AskRequest`
-Response: `AskResponse`
-
-#### `POST /api/session/cleanup/{session_id}`
-- Query params:
-  - `delete_documents` (default `false`)
-Response:
+### `EvaluationResponse`
 ```json
 {
-  "session_docs": 0,
-  "deleted_docs": 0
+  "doc_id": "string",
+  "method": "geval_e2e_rag",
+  "metrics": [
+    {
+      "name": "geval_overall",
+      "value": 0.81
+    }
+  ],
+  "examples": [
+    {
+      "question": "string",
+      "confidence": 0.72,
+      "grounded": true,
+      "citations": 4,
+      "latency_ms": 1100,
+      "geval_groundedness": 0.8,
+      "geval_answer_relevance": 0.8,
+      "geval_citation_faithfulness": 1.0,
+      "geval_overall": 0.866,
+      "answer_preview": "string"
+    }
+  ]
 }
 ```
 
-#### `POST /ingest-qa/invoke`
-- LangServe-compatible invoke route wrapping the same `ask(...)` pipeline.
+## Endpoints
+- `GET /api/health`
+- `POST /api/documents/upload`
+- `GET /api/documents/{doc_id}`
+- `GET /api/documents`
+- `POST /api/documents/clear`
+- `POST /api/chat/{session_id}/{doc_id}`
+- `POST /api/evaluate/{doc_id}`
+- `POST /api/session/cleanup/{session_id}`
+- `POST /ingest-qa/invoke` (LangServe-compatible)
 
 ## Environment Variables (`.env`)
 ```env
@@ -255,7 +268,9 @@ MAX_CHUNK_CHARS=1000
 CHUNK_OVERLAP_CHARS=200
 ```
 
-## Notes
-- Indexed vectors and metadata are stored under `data/`.
-- This is an English-contract focused pipeline.
-- FastAPI interactive API docs are available at runtime on `/docs` (Swagger UI).
+## Troubleshooting
+- If UI shows old evaluation metrics or `Overall score: N/A` after code changes:
+  1. Stop backend process.
+  2. Start again with `python run_api.py`.
+  3. Hard refresh browser (`Ctrl+F5`).
+- FastAPI interactive docs are available at `/docs`.
