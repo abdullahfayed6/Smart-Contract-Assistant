@@ -83,6 +83,61 @@ body {
   font-size: 0.88rem;
 }
 
+.eval-panel {
+  padding: 14px;
+}
+
+.eval-hint {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.eval-status {
+  font-size: 0.82rem;
+  color: #3e5774;
+  background: #f3f8ff;
+  border: 1px solid #d5e2f7;
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.eval-metrics,
+.eval-preview {
+  font-size: 0.8rem;
+  color: #304a66;
+  background: #f8fbff;
+  border: 1px solid #d9e6f7;
+  border-radius: 10px;
+  padding: 8px 10px;
+  min-height: 34px;
+}
+
+.eval-metric-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.eval-metric-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.eval-metric-item:last-child {
+  margin-bottom: 0;
+}
+
+.eval-metric-name {
+  color: #4c6480;
+}
+
+.eval-metric-value {
+  color: #0f2e57;
+  font-weight: 700;
+}
+
 .chat-panel {
   padding: 0;
   min-height: min(82vh, 920px);

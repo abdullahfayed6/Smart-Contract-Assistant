@@ -46,3 +46,29 @@ class DocumentStatus(BaseModel):
     pages_or_sections: int
     chunks_indexed: int
     indexed_at: datetime
+
+
+class EvalMetric(BaseModel):
+    name: str
+    value: float
+    note: Optional[str] = None
+
+
+class EvaluationExample(BaseModel):
+    question: str
+    confidence: float
+    grounded: bool
+    citations: int
+    latency_ms: int
+    geval_groundedness: float
+    geval_answer_relevance: float
+    geval_citation_faithfulness: float
+    geval_overall: float
+    answer_preview: str
+
+
+class EvaluationResponse(BaseModel):
+    doc_id: str
+    method: str
+    metrics: list[EvalMetric]
+    examples: list[EvaluationExample]

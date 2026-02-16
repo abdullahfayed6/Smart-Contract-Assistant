@@ -19,6 +19,10 @@ const el = {
   refreshBtn: document.getElementById("refresh-btn"),
   newChatBtn: document.getElementById("new-chat-btn"),
   clearBtn: document.getElementById("clear-btn"),
+  evalBtn: document.getElementById("eval-btn"),
+  evalStatus: document.getElementById("eval-status"),
+  evalMetrics: document.getElementById("eval-metrics"),
+  evalPreview: document.getElementById("eval-preview"),
   chatLog: document.getElementById("chat-log"),
   chatForm: document.getElementById("chat-form"),
   chatInput: document.getElementById("chat-input"),
@@ -62,6 +66,80 @@ function setButtonBusy(button, busy, busyText) {
   button.textContent = busy ? busyText : button.dataset.defaultText;
 }
 
+function formatMetricValue(name, value) {
+  const num = Number(value || 0);
+  if (String(name).endsWith("_ms")) {
+    return `${num.toFixed(1)} ms`;
+  }
+  return `${(num * 100).toFixed(2)}%`;
+}
+
+function resetEvalBox(message = "Select a document to enable evaluation.") {
+  if (el.evalStatus) {
+    el.evalStatus.textContent = message;
+  }
+  if (el.evalMetrics) {
+    el.evalMetrics.textContent = "No evaluation metrics yet.";
+  }
+  if (el.evalPreview) {
+    el.evalPreview.textContent = "No evaluation samples yet.";
+  }
+}
+
+function updateEvalButtonEnabledState() {
+  if (!el.evalBtn) {
+    return;
+  }
+  el.evalBtn.disabled = !state.selectedDocId;
+}
+
+function renderEvalResult(payload) {
+  const metrics = Array.isArray(payload?.metrics) ? payload.metrics : [];
+  const examples = Array.isArray(payload?.examples) ? payload.examples : [];
+  const overallMetric = metrics.find((row) => String(row?.name || "") === "geval_overall");
+  const overallText = overallMetric
+    ? `${(Number(overallMetric.value || 0) * 100).toFixed(1)}%`
+    : "N/A";
+
+  el.evalStatus.textContent =
+    `GEval completed on ${examples.length} prompts. Overall score: ${overallText}.`;
+
+  if (metrics.length === 0) {
+    el.evalMetrics.textContent = "No evaluation metrics returned.";
+  } else {
+    const list = document.createElement("ul");
+    list.className = "eval-metric-list";
+    for (const metric of metrics.slice(0, 6)) {
+      const item = document.createElement("li");
+      item.className = "eval-metric-item";
+
+      const name = document.createElement("span");
+      name.className = "eval-metric-name";
+      name.textContent = String(metric?.name || "metric");
+
+      const value = document.createElement("span");
+      value.className = "eval-metric-value";
+      value.textContent = formatMetricValue(metric?.name || "", metric?.value || 0);
+
+      item.appendChild(name);
+      item.appendChild(value);
+      list.appendChild(item);
+    }
+    el.evalMetrics.innerHTML = "";
+    el.evalMetrics.appendChild(list);
+  }
+
+  if (examples.length === 0) {
+    el.evalPreview.textContent = "No evaluation samples returned.";
+  } else {
+    const first = examples[0];
+    const sampleQuestion = String(first?.question || "").trim();
+    const sampleScore = Number(first?.geval_overall || 0);
+    el.evalPreview.textContent =
+      `Sample: ${sampleQuestion} | score ${(sampleScore * 100).toFixed(1)}%`;
+  }
+}
+
 function renderDocOptions(preferredDocId = "") {
   const docs = state.docs || [];
   const choices = docs.map((row) => String(row.doc_id || "")).filter(Boolean);
@@ -72,6 +150,8 @@ function renderDocOptions(preferredDocId = "") {
     el.docSelect.value = "";
     el.docSelect.disabled = true;
     renderDocInfo();
+    updateEvalButtonEnabledState();
+    resetEvalBox("Select a document to enable evaluation.");
     return;
   }
 
@@ -91,6 +171,8 @@ function renderDocOptions(preferredDocId = "") {
   }
   el.docSelect.value = nextSelected;
   renderDocInfo();
+  updateEvalButtonEnabledState();
+  resetEvalBox(`Selected document ready for GEval.`);
 }
 
 function renderDocInfo() {
@@ -361,6 +443,7 @@ async function handleClearData() {
     state.sessionId = newSessionId();
     setSessionBadge();
     resetChat("Storage cleared. Upload a new document to continue.");
+    resetEvalBox("Select a document to enable evaluation.");
     await refreshDocuments("", "All indexed documents and stored uploads were cleared.");
   } catch (error) {
     setStatus(`Clear failed: ${String(error)}`, "danger");
@@ -369,14 +452,53 @@ async function handleClearData() {
   }
 }
 
+async function handleEvaluate() {
+  if (!state.selectedDocId) {
+    setStatus("Select a document first.", "warning");
+    resetEvalBox("Select a document to enable evaluation.");
+    return;
+  }
+
+  setButtonBusy(el.evalBtn, true, "Running...");
+  el.evalStatus.textContent = "Running E2E GEval. This can take up to a minute.";
+  try {
+    const response = await apiFetch(
+      `/api/evaluate/${encodeURIComponent(state.selectedDocId)}`,
+      { method: "POST" },
+      REQUEST_TIMEOUT_MS,
+    );
+    if (!response.ok) {
+      const errorText = await parseApiError(response);
+      setStatus(`Evaluation failed: ${errorText}`, "danger");
+      el.evalStatus.textContent = `Evaluation failed: ${errorText}`;
+      return;
+    }
+    const payload = await response.json();
+    renderEvalResult(payload);
+    setStatus("E2E GEval completed.", "success");
+  } catch (error) {
+    const msg = String(error);
+    setStatus(`Evaluation failed: ${msg}`, "danger");
+    el.evalStatus.textContent = `Evaluation failed: ${msg}`;
+  } finally {
+    setButtonBusy(el.evalBtn, false, "Running...");
+    updateEvalButtonEnabledState();
+  }
+}
+
 function wireEvents() {
   el.uploadForm.addEventListener("submit", handleUpload);
   el.refreshBtn.addEventListener("click", () => refreshDocuments());
   el.newChatBtn.addEventListener("click", handleNewChat);
   el.clearBtn.addEventListener("click", handleClearData);
+  if (el.evalBtn) {
+    el.evalBtn.addEventListener("click", handleEvaluate);
+  }
   el.docSelect.addEventListener("change", () => {
     state.selectedDocId = el.docSelect.value || "";
     renderDocInfo();
+    updateEvalButtonEnabledState();
+    resetEvalBox("Selected document ready for GEval.");
   });
   el.chatForm.addEventListener("submit", handleSend);
   el.chatInput.addEventListener("keydown", (event) => {
@@ -390,6 +512,8 @@ function wireEvents() {
 async function init() {
   setSessionBadge();
   resetChat("Upload a contract to start chatting.");
+  resetEvalBox("Select a document to enable evaluation.");
+  updateEvalButtonEnabledState();
   wireEvents();
   await Promise.all([loadHealth(), refreshDocuments()]);
 }

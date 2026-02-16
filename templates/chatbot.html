@@ -69,6 +69,18 @@
 
           <div id="status-alert" class="alert alert-secondary mt-3 mb-0 d-none" role="alert"></div>
         </section>
+
+        <section class="panel eval-panel mt-3">
+          <h2 class="panel-title mb-2">E2E RAG Evaluation</h2>
+          <p class="eval-hint mb-2">Run G-Eval scoring on the selected document.</p>
+          <button id="eval-btn" class="btn btn-outline-dark w-100" type="button">
+            <i class="bi bi-clipboard-data"></i>
+            Run GEval
+          </button>
+          <div id="eval-status" class="eval-status mt-2">Select a document to enable evaluation.</div>
+          <div id="eval-metrics" class="eval-metrics mt-2"></div>
+          <div id="eval-preview" class="eval-preview mt-2"></div>
+        </section>
       </aside>
 
       <section class="col-12 col-lg-8 col-xl-9">

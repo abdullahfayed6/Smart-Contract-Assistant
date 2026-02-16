@@ -13,12 +13,14 @@ from app.core.schemas import (
     AskRequest,
     AskResponse,
     DocumentStatus,
+    EvaluationResponse,
     UploadResponse,
 )
 from app.services.rag_pipeline import (
     ask,
     cleanup_session_documents,
     clear_all_documents,
+    evaluate,
     get_document_status,
     ingest_document,
     register_session_document,
@@ -87,6 +89,14 @@ def clear_documents() -> dict[str, int]:
 def chat(session_id: str, doc_id: str, req: AskRequest) -> AskResponse:
     try:
         return ask(doc_id=doc_id, session_id=session_id, question=req.question, top_k=req.top_k)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/evaluate/{doc_id}", response_model=EvaluationResponse)
+def evaluate_doc(doc_id: str) -> EvaluationResponse:
+    try:
+        return evaluate(doc_id=doc_id)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

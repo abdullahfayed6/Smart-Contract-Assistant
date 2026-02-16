@@ -41,12 +41,16 @@ class OpenAIClient:
                 "messages": messages,
                 "temperature": temperature,
             }
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                json=payload,
-                headers=self._headers,
-                timeout=self.timeout,
-            )
+            try:
+                response = requests.post(
+                    f"{self.base_url}/chat/completions",
+                    json=payload,
+                    headers=self._headers,
+                    timeout=self.timeout,
+                )
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{model_name}: request_error={exc}")
+                continue
             if response.ok:
                 data = response.json()
                 return data["choices"][0]["message"]["content"]
@@ -120,12 +124,16 @@ class OpenAIClient:
                 "model": model_name,
                 "input": texts,
             }
-            response = requests.post(
-                f"{self.base_url}/embeddings",
-                json=payload,
-                headers=self._headers,
-                timeout=self.timeout,
-            )
+            try:
+                response = requests.post(
+                    f"{self.base_url}/embeddings",
+                    json=payload,
+                    headers=self._headers,
+                    timeout=self.timeout,
+                )
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{model_name}: request_error={exc}")
+                continue
             if response.ok:
                 data = response.json()
                 return [row["embedding"] for row in data["data"]]

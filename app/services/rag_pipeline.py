@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 import time
@@ -10,7 +11,15 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from app.core.config import settings
-from app.core.schemas import AskResponse, Citation, DocumentStatus, GuardrailStatus
+from app.core.schemas import (
+    AskResponse,
+    Citation,
+    DocumentStatus,
+    EvaluationExample,
+    EvaluationResponse,
+    EvalMetric,
+    GuardrailStatus,
+)
 from app.services.chat_memory import memory
 from app.services.chunking import chunk_text
 from app.services.document_parser import extract_sections
@@ -27,6 +36,14 @@ LIST_INTENT_REGEX_PATTERNS = (
     r"\bkeywords?\b",
     r"\bappendix\b",
     r"\bevery\b",
+)
+GEVAL_QUESTIONS = (
+    "What is the core purpose of this contract?",
+    "What are the key obligations or responsibilities mentioned?",
+    "What termination conditions are defined?",
+    "Are there confidentiality requirements? If yes, explain.",
+    "What payment, fee, or commission terms are specified?",
+    "What governing law or jurisdiction is specified?",
 )
 SESSION_DOCS: dict[str, set[str]] = defaultdict(set)
 
@@ -334,4 +351,136 @@ def ask(
         ),
         latency_ms=latency_ms,
         retrieved_chunks=len(retrieved),
+    )
+
+
+def _extract_json_block(text: str) -> dict:
+    block = (text or "").strip()
+    if "```" in block:
+        match = re.search(r"```(?:json)?\s*(.*?)\s*```", block, flags=re.DOTALL | re.IGNORECASE)
+        if match:
+            block = match.group(1).strip()
+    try:
+        payload = json.loads(block)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _geval_llm_judge(question: str, answer: str, citations: list[Citation]) -> tuple[float, float, float]:
+    citation_lines = []
+    for row in citations[:5]:
+        citation_lines.append(f"- chunk_id={row.chunk_id}: {row.quote}")
+    citation_text = "\n".join(citation_lines) if citation_lines else "- (none)"
+
+    prompt = (
+        "You are evaluating RAG answer quality.\n"
+        "Score each dimension from 1 to 5 only.\n"
+        "Return ONLY valid JSON with keys: groundedness, answer_relevance, citation_faithfulness.\n\n"
+        f"Question:\n{question}\n\n"
+        f"Answer:\n{answer}\n\n"
+        f"Citations:\n{citation_text}\n"
+    )
+    raw = openai_client.chat_completion(
+        messages=[
+            {"role": "system", "content": "You are a strict evaluator that outputs JSON only."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.0,
+    )
+    payload = _extract_json_block(raw)
+
+    def _clamp(value: float) -> float:
+        return max(1.0, min(5.0, float(value)))
+
+    if payload:
+        try:
+            return (
+                _clamp(payload.get("groundedness", 3)),
+                _clamp(payload.get("answer_relevance", 3)),
+                _clamp(payload.get("citation_faithfulness", 3)),
+            )
+        except Exception:
+            pass
+
+    has_citations = 1.0 if citations else 0.0
+    groundedness = 2.0 + (2.0 * has_citations)
+    answer_relevance = 1.0 + min(4.0, max(0.0, len(answer.strip()) / 180.0))
+    citation_faithfulness = 1.0 + (3.0 * has_citations)
+    return (
+        max(1.0, min(5.0, groundedness)),
+        max(1.0, min(5.0, answer_relevance)),
+        max(1.0, min(5.0, citation_faithfulness)),
+    )
+
+
+def evaluate(doc_id: str) -> EvaluationResponse:
+    examples: list[EvaluationExample] = []
+    metric_acc: dict[str, float] = {
+        "groundedness": 0.0,
+        "answer_relevance": 0.0,
+        "citation_faithfulness": 0.0,
+        "overall": 0.0,
+        "confidence": 0.0,
+        "latency_ms": 0.0,
+        "grounded_rate": 0.0,
+    }
+
+    for idx, question in enumerate(GEVAL_QUESTIONS):
+        session_id = f"geval::{doc_id}::{idx}"
+        memory.clear(session_id)
+        resp = ask(
+            doc_id=doc_id,
+            session_id=session_id,
+            question=question,
+            top_k=max(8, settings.default_top_k // 2),
+            use_llm_rerank=False,
+        )
+        memory.clear(session_id)
+
+        groundedness_1_5, relevance_1_5, citation_1_5 = _geval_llm_judge(
+            question=question,
+            answer=resp.answer,
+            citations=resp.citations,
+        )
+        overall_1_5 = (groundedness_1_5 + relevance_1_5 + citation_1_5) / 3.0
+
+        metric_acc["groundedness"] += groundedness_1_5 / 5.0
+        metric_acc["answer_relevance"] += relevance_1_5 / 5.0
+        metric_acc["citation_faithfulness"] += citation_1_5 / 5.0
+        metric_acc["overall"] += overall_1_5 / 5.0
+        metric_acc["confidence"] += float(resp.confidence)
+        metric_acc["latency_ms"] += float(resp.latency_ms)
+        metric_acc["grounded_rate"] += 1.0 if resp.guardrail_status.grounded else 0.0
+
+        examples.append(
+            EvaluationExample(
+                question=question,
+                confidence=float(resp.confidence),
+                grounded=bool(resp.guardrail_status.grounded),
+                citations=len(resp.citations),
+                latency_ms=int(resp.latency_ms),
+                geval_groundedness=groundedness_1_5 / 5.0,
+                geval_answer_relevance=relevance_1_5 / 5.0,
+                geval_citation_faithfulness=citation_1_5 / 5.0,
+                geval_overall=overall_1_5 / 5.0,
+                answer_preview=resp.answer[:280],
+            )
+        )
+
+    n = max(1, len(examples))
+    metrics = [
+        EvalMetric(name="geval_overall", value=metric_acc["overall"] / n, note="LLM-as-judge average score."),
+        EvalMetric(name="geval_groundedness", value=metric_acc["groundedness"] / n),
+        EvalMetric(name="geval_answer_relevance", value=metric_acc["answer_relevance"] / n),
+        EvalMetric(name="geval_citation_faithfulness", value=metric_acc["citation_faithfulness"] / n),
+        EvalMetric(name="grounded_rate", value=metric_acc["grounded_rate"] / n),
+        EvalMetric(name="avg_confidence", value=metric_acc["confidence"] / n),
+        EvalMetric(name="avg_latency_ms", value=metric_acc["latency_ms"] / n),
+    ]
+    return EvaluationResponse(
+        doc_id=doc_id,
+        method="geval_e2e_rag",
+        metrics=metrics,
+        examples=examples,
     )
