@@ -6,6 +6,12 @@ Contract Q&A application with Retrieval-Augmented Generation (RAG):
 - Chat with grounded answers and chunk citations
 - Manage stored documents from the web UI
 
+## What Was Removed
+This project no longer includes summary/evaluation features or files:
+- Removed summary/evaluation API endpoints
+- Removed summary/evaluation schemas and evaluator module
+- Removed local `docs/` folder
+
 ## Tech Stack
 - Backend: FastAPI
 - Frontend: FastAPI-served HTML/CSS/JS (Bootstrap)
