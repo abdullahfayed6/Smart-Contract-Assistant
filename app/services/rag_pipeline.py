@@ -46,6 +46,29 @@ GEVAL_QUESTIONS = (
     "What governing law or jurisdiction is specified?",
 )
 SESSION_DOCS: dict[str, set[str]] = defaultdict(set)
+BASE_ASSISTANT_SYSTEM_PROMPT = (
+    "You are Smart Contract Assistant.\n"
+    "You must answer using only the provided Document Context.\n"
+    "Do not use outside knowledge.\n"
+    "If the context is insufficient, answer exactly: "
+    "\"I do not have enough evidence from this document to answer.\"\n"
+    "Every factual claim must include at least one citation using this exact format: (chunk_id=<id>).\n"
+    "Never invent chunk IDs. Never cite chunks that are not in context.\n"
+    "Keep the answer concise, clear, and contract-focused."
+)
+LIST_INTENT_SYSTEM_EXTENSION = (
+    "The user requested an exhaustive list.\n"
+    "Return all relevant items found in context as a numbered list.\n"
+    "Do not summarize or merge distinct items.\n"
+    "If retrieved evidence seems partial, include this exact sentence at the end: "
+    "\"Retrieved context may be incomplete.\""
+)
+GEVAL_JUDGE_SYSTEM_PROMPT = (
+    "You are a strict RAG evaluator.\n"
+    "Output must be valid JSON only, no markdown, no prose.\n"
+    "Required JSON keys: groundedness, answer_relevance, citation_faithfulness.\n"
+    "Each value must be a number from 1 to 5."
+)
 
 
 def _doc_id_for_file(filename: str, payload: bytes) -> str:
@@ -254,6 +277,12 @@ def _normalize_score(raw: float) -> float:
     return 1.0 / (1.0 + math.exp(-bounded))
 
 
+def _build_answer_system_prompt(list_intent: bool) -> str:
+    if not list_intent:
+        return BASE_ASSISTANT_SYSTEM_PROMPT
+    return f"{BASE_ASSISTANT_SYSTEM_PROMPT}\n{LIST_INTENT_SYSTEM_EXTENSION}"
+
+
 def ask(
     doc_id: str,
     session_id: str,
@@ -288,19 +317,7 @@ def ask(
         ]
     )
     list_intent = _is_list_intent(question)
-    if list_intent:
-        system_prompt = (
-            "You are a contract assistant. Answer only from provided context.\n"
-            "The user asked for an exhaustive list. Output every item found in context.\n"
-            "Do not summarize, do not compress, do not omit repeated items.\n"
-            "If retrieved context appears incomplete, explicitly include: Retrieved context may be incomplete.\n"
-            "Cite chunk_id references."
-        )
-    else:
-        system_prompt = (
-            "You are a contract assistant. Answer only from provided context.\n"
-            "Always cite chunk_id references in your answer. If evidence is weak, say you do not know."
-        )
+    system_prompt = _build_answer_system_prompt(list_intent=list_intent)
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(memory.get(session_id))
     messages.append(
@@ -309,7 +326,8 @@ def ask(
             "content": (
                 f"Question: {question}\n\n"
                 f"Document Context:\n{context}\n\n"
-                "Return a concise answer grounded in context."
+                "Return a concise answer grounded in context. "
+                "Use markdown when helpful."
             ),
         }
     )
@@ -374,16 +392,19 @@ def _geval_llm_judge(question: str, answer: str, citations: list[Citation]) -> t
     citation_text = "\n".join(citation_lines) if citation_lines else "- (none)"
 
     prompt = (
-        "You are evaluating RAG answer quality.\n"
-        "Score each dimension from 1 to 5 only.\n"
-        "Return ONLY valid JSON with keys: groundedness, answer_relevance, citation_faithfulness.\n\n"
+        "Evaluate the following RAG answer.\n"
+        "Scoring rubric (1-5):\n"
+        "- groundedness: Is the answer supported by cited evidence?\n"
+        "- answer_relevance: Does it directly answer the question?\n"
+        "- citation_faithfulness: Do citations align with the answer content?\n\n"
+        "Return JSON object only.\n\n"
         f"Question:\n{question}\n\n"
         f"Answer:\n{answer}\n\n"
         f"Citations:\n{citation_text}\n"
     )
     raw = openai_client.chat_completion(
         messages=[
-            {"role": "system", "content": "You are a strict evaluator that outputs JSON only."},
+            {"role": "system", "content": GEVAL_JUDGE_SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ],
         temperature=0.0,
