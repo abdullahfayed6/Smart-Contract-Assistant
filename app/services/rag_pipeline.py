@@ -209,7 +209,7 @@ def _retrieve(
     q_vector = openai_client.embed([question], input_type="query")[0]
     vector_hits = store.similarity_search(q_vector, doc_id=doc_id, top_k=top_k)
     keyword_hits = store.keyword_search(question, doc_id=doc_id, top_k=top_k)
-    merged = _merge_hits(vector_hits, keyword_hits)
+    merged = _fuse_hits_rrf(vector_hits, keyword_hits)
     if not merged:
         return []
     max_candidates = min(30, max(12, rerank_top_k * 3))
@@ -242,16 +242,33 @@ def _retrieve(
     return ordered
 
 
-def _merge_hits(vector_hits: list[IndexedChunk], keyword_hits: list[IndexedChunk]) -> dict[str, IndexedChunk]:
-    merged: dict[str, IndexedChunk] = {}
-    for row in vector_hits + keyword_hits:
-        if row.chunk_id not in merged:
-            merged[row.chunk_id] = row
-            continue
-        existing = merged[row.chunk_id]
-        if row.score > existing.score:
-            merged[row.chunk_id] = row
-    return merged
+def _filter_retrieved_by_score(retrieved: list[IndexedChunk], min_score: float) -> list[IndexedChunk]:
+    filtered = [row for row in retrieved if _normalize_score(row.score) >= min_score]
+    # Keep at least one chunk when everything is below threshold so generation still has context.
+    if filtered:
+        return filtered
+    return retrieved[:1]
+
+
+def _extract_cited_chunk_ids(answer: str) -> set[str]:
+    return set(re.findall(r"chunk_id=([A-Za-z0-9._:-]+)", answer or ""))
+
+
+def _fuse_hits_rrf(vector_hits: list[IndexedChunk], keyword_hits: list[IndexedChunk], k: int = 60) -> dict[str, IndexedChunk]:
+    # Reciprocal Rank Fusion: robustly combine vector and keyword rankings.
+    scores: dict[str, float] = {}
+    rows: dict[str, IndexedChunk] = {}
+    for rank, row in enumerate(vector_hits):
+        scores[row.chunk_id] = scores.get(row.chunk_id, 0.0) + (1.0 / (k + rank + 1))
+        rows[row.chunk_id] = row
+    for rank, row in enumerate(keyword_hits):
+        scores[row.chunk_id] = scores.get(row.chunk_id, 0.0) + (1.0 / (k + rank + 1))
+        if row.chunk_id not in rows:
+            rows[row.chunk_id] = row
+
+    for chunk_id, score in scores.items():
+        rows[chunk_id].score = score
+    return rows
 
 
 def _is_list_intent(question: str) -> bool:
@@ -310,10 +327,12 @@ def ask(
             retrieved_chunks=0,
         )
 
+    effective_retrieved = _filter_retrieved_by_score(retrieved=retrieved, min_score=min_score)
+
     context = "\n\n".join(
         [
             f"[{idx+1}] (chunk_id={row.chunk_id}, section={row.section_id}, score={row.score:.4f}) {row.text}"
-            for idx, row in enumerate(retrieved)
+            for idx, row in enumerate(effective_retrieved)
         ]
     )
     list_intent = _is_list_intent(question)
@@ -336,9 +355,14 @@ def ask(
     memory.add(session_id, "user", question)
     memory.add(session_id, "assistant", response)
 
-    normalized_scores = [_normalize_score(c.score) for c in retrieved]
+    normalized_scores = [_normalize_score(c.score) for c in effective_retrieved]
     confidence = min(1.0, max(0.0, sum(normalized_scores) / max(1, len(normalized_scores))))
-    grounded = confidence >= min_score or len(retrieved) >= 2
+    cited_ids = _extract_cited_chunk_ids(response)
+    citation_rows = sorted(
+        effective_retrieved,
+        key=lambda row: (0 if row.chunk_id in cited_ids else 1, -row.score),
+    )
+    grounded = confidence >= min_score and len(citation_rows) > 0
     citations = [
         Citation(
             doc_id=doc_id,
@@ -347,11 +371,11 @@ def ask(
             page=row.section_id,
             quote=row.text[:280],
         )
-        for row in retrieved
+        for row in citation_rows
     ]
     latency_ms = int((time.perf_counter() - start) * 1000)
     answer = response
-    if list_intent and len(retrieved) < max(8, rerank_k // 2) and "Retrieved context may be incomplete." not in answer:
+    if list_intent and len(effective_retrieved) < max(8, rerank_k // 2) and "Retrieved context may be incomplete." not in answer:
         answer = answer.rstrip() + "\n\nRetrieved context may be incomplete."
     if not grounded:
         answer = (
@@ -368,7 +392,7 @@ def ask(
             reason="Grounded answer." if grounded else "Low retrieval confidence.",
         ),
         latency_ms=latency_ms,
-        retrieved_chunks=len(retrieved),
+        retrieved_chunks=len(effective_retrieved),
     )
 
 

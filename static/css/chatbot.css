@@ -1,16 +1,23 @@
 :root {
-  --bg-start: #eef4fb;
-  --bg-end: #dde8f6;
+  --bg-start: #edf2f8;
+  --bg-end: #dce4f2;
   --panel-bg: #ffffff;
-  --panel-border: #d6e1f1;
-  --title: #0f2e57;
-  --text: #203447;
-  --muted: #5e6f82;
-  --assistant-bg: #f1f6fd;
-  --assistant-border: #d5e3f7;
-  --user-bg: #1f6fd6;
+  --panel-border: #d0dced;
+  --title: #102d53;
+  --text: #1f344c;
+  --muted: #5a6e84;
+  --assistant-bg: #f3f7fd;
+  --assistant-border: #d3e0f2;
+  --user-bg: #1a66ca;
   --user-text: #ffffff;
-  --shadow: 0 8px 28px rgba(15, 46, 87, 0.08);
+  --shadow: 0 10px 30px rgba(16, 45, 83, 0.1);
+  --radius-panel: 18px;
+  --radius-bubble: 14px;
+  --space-1: 6px;
+  --space-2: 10px;
+  --space-3: 14px;
+  --space-4: 18px;
+  --space-5: 24px;
 }
 
 *,
@@ -26,19 +33,22 @@ body {
   background:
     radial-gradient(circle at top right, rgba(66, 133, 244, 0.16) 0, transparent 44%),
     linear-gradient(160deg, var(--bg-start), var(--bg-end));
-  font-family: "Segoe UI", "Inter", sans-serif;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  line-height: 1.45;
+  overflow: hidden;
 }
 
 .app-shell {
-  max-width: 1600px;
+  max-width: 1680px;
+  min-height: 100vh;
 }
 
 .topbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--space-3);
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: end;
 }
 
 .app-title {
@@ -46,45 +56,68 @@ body {
   letter-spacing: 0.01em;
   font-weight: 700;
   font-size: clamp(1.3rem, 2vw, 1.8rem);
+  font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
 }
 
 .app-subtitle {
   color: var(--muted);
-  font-size: 0.95rem;
+  font-size: 0.94rem;
+  max-width: 50ch;
 }
 
 .topbar-meta {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: center;
   flex-wrap: wrap;
+}
+
+.app-grid {
+  align-items: stretch;
+}
+
+.layout-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  height: calc(100vh - 120px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.chat-column {
+  display: flex;
 }
 
 .panel {
   background: var(--panel-bg);
   border: 1px solid var(--panel-border);
-  border-radius: 18px;
+  border-radius: var(--radius-panel);
   box-shadow: var(--shadow);
 }
 
 .controls-panel {
-  padding: 18px;
+  padding: var(--space-4);
 }
 
 .panel-title {
-  margin: 0 0 14px;
+  margin: 0 0 var(--space-3);
   color: var(--title);
   font-size: 1rem;
   font-weight: 700;
+  font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
 }
 
 .doc-info {
   color: var(--muted);
   font-size: 0.88rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .eval-panel {
-  padding: 14px;
+  padding: var(--space-3);
 }
 
 .eval-hint {
@@ -140,19 +173,22 @@ body {
 
 .chat-panel {
   padding: 0;
-  min-height: min(82vh, 920px);
+  height: calc(100vh - 120px);
+  min-height: 560px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  width: 100%;
 }
 
 .chat-log {
   flex: 1;
   overflow-y: auto;
-  padding: 18px;
+  padding: var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-3);
+  min-height: 0;
 }
 
 .message-row {
@@ -169,9 +205,9 @@ body {
 }
 
 .bubble {
-  max-width: min(85%, 760px);
-  border-radius: 14px;
-  padding: 10px 12px;
+  max-width: min(84%, 760px);
+  border-radius: var(--radius-bubble);
+  padding: var(--space-2) var(--space-3);
   border: 1px solid transparent;
   line-height: 1.45;
   white-space: pre-wrap;
@@ -192,7 +228,7 @@ body {
 }
 
 .bubble-meta {
-  margin-top: 7px;
+  margin-top: var(--space-1);
   font-size: 0.79rem;
   opacity: 0.85;
 }
@@ -241,23 +277,23 @@ body {
 }
 
 .composer {
-  padding: 12px;
+  padding: var(--space-3);
   border-top: 1px solid var(--panel-border);
   background: #f7fafe;
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: end;
 }
 
 .composer .form-control {
   resize: vertical;
-  min-height: 42px;
+  min-height: 52px;
   max-height: 180px;
 }
 
 .composer-send {
-  min-width: 108px;
+  min-width: 110px;
 }
 
 .badge .bi-dot {
@@ -287,26 +323,50 @@ body {
 }
 
 @media (max-width: 991.98px) {
+  body {
+    overflow: auto;
+  }
+
+  .layout-sidebar {
+    height: auto;
+    overflow: visible;
+    padding-right: 0;
+  }
+
   .chat-panel {
-    min-height: 72vh;
+    height: auto;
+    min-height: 70vh;
+  }
+
+  .controls-panel,
+  .eval-panel {
+    margin-bottom: 0;
   }
 }
 
 @media (max-width: 575.98px) {
   .controls-panel {
-    padding: 14px;
+    padding: var(--space-3);
   }
 
   .chat-log {
-    padding: 12px;
+    padding: var(--space-3);
   }
 
   .composer {
-    padding: 10px;
+    padding: var(--space-2);
     grid-template-columns: 1fr;
   }
 
   .composer-send {
     width: 100%;
+  }
+
+  .bubble {
+    max-width: 100%;
+  }
+
+  .chat-panel {
+    min-height: 66vh;
   }
 }

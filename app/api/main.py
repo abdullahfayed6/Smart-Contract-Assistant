@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi import Request
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from langchain_core.runnables import RunnableLambda
@@ -37,6 +38,18 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 @app.get("/", include_in_schema=False)
 def index(request: Request):
     return templates.TemplateResponse("chatbot.html", {"request": request})
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> Response:
+    # Avoid noisy browser 404 probes when no favicon file is provided.
+    return Response(status_code=200, content=b"", media_type="image/x-icon")
+
+
+@app.get("/.well-known/appspecific/com.chrome.devtools.json", include_in_schema=False)
+def chrome_devtools_probe() -> JSONResponse:
+    # Chrome/DevTools may probe this path; return a valid empty payload.
+    return JSONResponse(content={})
 
 
 @app.get("/api/health")

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 import re
@@ -22,27 +22,20 @@ def chunk_text(
     if _should_use_list_chunking(text):
         return _chunk_by_lines(text=text, section_id=section_id, prefix=prefix, lines_per_chunk=60, overlap_lines=10)
 
-    clean = " ".join(text.split())
-    if not clean:
+    if not text or not text.strip():
         return []
 
-    chunks: list[Chunk] = []
-    start = 0
-    idx = 0
-    step = max(1, max_chars - overlap_chars)
+    paragraphs = _semantic_paragraphs(text)
+    if not paragraphs:
+        return []
 
-    while start < len(clean):
-        end = min(len(clean), start + max_chars)
-        body = clean[start:end].strip()
-        if body:
-            chunk_id = f"{prefix}s{section_id}_c{idx}"
-            chunks.append(Chunk(chunk_id=chunk_id, section_id=section_id, text=body))
-            idx += 1
-        if end == len(clean):
-            break
-        start += step
-
-    return chunks
+    return _chunk_by_paragraphs(
+        paragraphs=paragraphs,
+        section_id=section_id,
+        prefix=prefix,
+        max_chars=max_chars,
+        overlap_chars=overlap_chars,
+    )
 
 
 def _should_use_list_chunking(text: str) -> bool:
@@ -92,3 +85,93 @@ def _chunk_by_lines(
         start += step
     return chunks
 
+
+def _semantic_paragraphs(text: str) -> list[str]:
+    # Preserve structure by chunking on paragraph boundaries first.
+    blocks = re.split(r"\n\s*\n+", text)
+    paragraphs: list[str] = []
+    for block in blocks:
+        normalized = "\n".join(line.strip() for line in block.splitlines() if line.strip())
+        if normalized:
+            paragraphs.append(normalized)
+    return paragraphs
+
+
+def _chunk_by_paragraphs(
+    paragraphs: list[str],
+    section_id: int,
+    prefix: str,
+    max_chars: int,
+    overlap_chars: int,
+) -> list[Chunk]:
+    chunks: list[Chunk] = []
+    idx = 0
+    current = ""
+
+    def flush() -> None:
+        nonlocal idx, current
+        body = current.strip()
+        if not body:
+            return
+        chunk_id = f"{prefix}s{section_id}_c{idx}"
+        chunks.append(Chunk(chunk_id=chunk_id, section_id=section_id, text=body))
+        idx += 1
+        current = body[-overlap_chars:].strip() if overlap_chars > 0 else ""
+
+    for paragraph in paragraphs:
+        units = _split_large_paragraph(paragraph, max_chars=max_chars)
+        for unit in units:
+            candidate = f"{current}\n\n{unit}".strip() if current else unit
+            if len(candidate) <= max_chars:
+                current = candidate
+                continue
+
+            flush()
+
+            if len(unit) <= max_chars:
+                current = unit
+                continue
+
+            # Final fallback for paragraphs with no suitable sentence boundaries.
+            start = 0
+            step = max(1, max_chars - overlap_chars)
+            while start < len(unit):
+                end = min(len(unit), start + max_chars)
+                body = unit[start:end].strip()
+                if body:
+                    chunk_id = f"{prefix}s{section_id}_c{idx}"
+                    chunks.append(Chunk(chunk_id=chunk_id, section_id=section_id, text=body))
+                    idx += 1
+                if end == len(unit):
+                    break
+                start += step
+            current = ""
+
+    if current.strip():
+        chunk_id = f"{prefix}s{section_id}_c{idx}"
+        chunks.append(Chunk(chunk_id=chunk_id, section_id=section_id, text=current.strip()))
+
+    return chunks
+
+
+def _split_large_paragraph(paragraph: str, max_chars: int) -> list[str]:
+    if len(paragraph) <= max_chars:
+        return [paragraph]
+
+    sentences = re.split(r"(?<=[.!?])\s+", paragraph)
+    units: list[str] = []
+    current = ""
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        candidate = f"{current} {sentence}".strip() if current else sentence
+        if len(candidate) <= max_chars:
+            current = candidate
+            continue
+        if current:
+            units.append(current)
+        current = sentence
+    if current:
+        units.append(current)
+    return units or [paragraph]
