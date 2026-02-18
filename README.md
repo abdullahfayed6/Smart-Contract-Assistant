@@ -7,11 +7,6 @@ Contract Q&A application with Retrieval-Augmented Generation (RAG):
 - Run E2E RAG evaluation (G-Eval) for the selected document
 - Manage stored documents from the web UI
 
-## Current Scope
-- Included: chat, upload/index, document management, E2E GEval
-- Removed: summary endpoint/UI
-- Removed: local `docs/` folder
-
 ## Tech Stack
 - Backend: FastAPI
 - Frontend: FastAPI-served HTML/CSS/JavaScript (Bootstrap)
