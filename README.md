@@ -82,8 +82,9 @@ python run_api.py
 2. Parsing and chunking
 - `document_parser.py` extracts contract text sections.
 - `chunking.py` creates chunks:
-  - normal sections: character chunking
-  - list-like sections: line-based chunking
+  - normal sections: semantic paragraph-first chunking with sentence-aware splitting
+  - overlap retention across chunks for context continuity
+  - list-like sections (appendix/keyword-heavy): line-based chunking
 
 3. Embedding and indexing
 - `openai_client.py` builds embeddings.
@@ -94,13 +95,17 @@ python run_api.py
 - `rag_pipeline.py` does:
   - list-intent detection
   - hybrid retrieval (vector + keyword BM25)
-  - merge + dedupe by `chunk_id`
-  - rerank
+  - Reciprocal Rank Fusion (RRF) to combine vector + keyword rankings
+  - rerank (LLM rerank by default, embedding rerank fallback)
+  - score-threshold filtering before answer generation
+  - citation-aware ordering (chunks explicitly cited by model are prioritized)
   - grounded answer generation with citations
 
 5. Guardrails
 - Response includes confidence and grounded status.
 - Low-confidence answers are flagged in output.
+- If no retrieval hits exist, the assistant returns:
+  - `I do not have enough evidence from this document to answer.`
 
 6. E2E GEval pipeline
 - UI button calls `POST /api/evaluate/{doc_id}`.
@@ -258,14 +263,14 @@ OPENAI_RERANK_MODEL=gpt-4o-mini
 CHROMA_DIR=data/chroma
 UPLOAD_DIR=data/uploads
 PROCESSED_DIR=data/processed
-DEFAULT_TOP_K=30
-RERANK_TOP_K=10
+DEFAULT_TOP_K=20
+RERANK_TOP_K=8
 RETRIEVAL_MIN_SCORE=0.3
 LIST_INTENT_TOP_K=50
 LIST_INTENT_RERANK_TOP_K=25
 LIST_INTENT_MIN_SCORE=0.2
-MAX_CHUNK_CHARS=1000
-CHUNK_OVERLAP_CHARS=200
+MAX_CHUNK_CHARS=900
+CHUNK_OVERLAP_CHARS=180
 ```
 
 ## Troubleshooting
